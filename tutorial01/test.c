@@ -17,6 +17,10 @@ static int test_pass = 0;
             main_ret = 1;\
         }\
     } while(0)
+//若宏的替换文本有多行，每行末尾需加 \（反斜杠）连接（最后一行除外）。
+//在宏定义中使用 do { ... } while(0) 包裹代码，核心目的不是为了 “循环执行”（它确实只执行一次），
+//而是为了让宏在各种场景下都能符合 C 语言的语法规则，避免因宏的使用方式不同而导致编译错误或逻辑错误。
+//BASE 表示这是一个基础宏（通常被其他宏间接调用）。
 
 #define EXPECT_EQ_INT(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%d")
 
