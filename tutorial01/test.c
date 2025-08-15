@@ -20,6 +20,12 @@ static int test_pass = 0;
 //若宏的替换文本有多行，每行末尾需加 \（反斜杠）连接（最后一行除外）。
 //在宏定义中使用 do { ... } while(0) 包裹代码，核心目的不是为了 “循环执行”（它确实只执行一次），
 //而是为了让宏在各种场景下都能符合 C 语言的语法规则，避免因宏的使用方式不同而导致编译错误或逻辑错误。
+// 避免分支语句中的逻辑错误
+// 例如定义一个宏：
+// #define LOG(msg) printf("Log: %s\n", msg); fflush(stdout);
+// 当在 if 语句中使用时：
+// if (flag)
+//     LOG("success");  // 展开后会导致 fflush 不受 if 控制
 //BASE 表示这是一个基础宏（通常被其他宏间接调用）。
 
 #define EXPECT_EQ_INT(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%d")
