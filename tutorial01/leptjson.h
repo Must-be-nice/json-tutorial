@@ -18,9 +18,11 @@ typedef struct {
 enum {
     LEPT_PARSE_OK = 0,
     LEPT_PARSE_EXPECT_VALUE,//若一个 JSON 只含有空白，传回 
-    LEPT_PARSE_INVALID_VALUE,//若一个值之后，在空白之后还有其他字符，传回
-    LEPT_PARSE_ROOT_NOT_SINGULAR //若值不是那三种字面值，传回
+    LEPT_PARSE_INVALID_VALUE,//若值不是那三种字面值，传回
+    LEPT_PARSE_ROOT_NOT_SINGULAR //若一个值之后，在空白之后还有其他字符，传回
 };
+//在 C 语言的枚举（enum）中，当某个枚举成员没有显式赋值时，
+//它的值会自动继承前一个成员的值并加1。这是枚举的默认行为，用于简化连续值的定义。
 
 int lept_parse(lept_value* v, const char* json);
 // 作用：解析 JSON 字符串并将结果存储在 lept_value 结构中
