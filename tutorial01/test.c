@@ -50,13 +50,16 @@ static int test_pass = 0;// 通过的测试用例数
 //EXPECT_EQ_INT：针对整数的断言宏，复用EXPECT_EQ_BASE，指定比较方式为(expect) == (actual)，格式化字符串为%d（整数格式）
 
 // static限制全局变量的作用域仅为当前源文件（.c 文件），其他源文件无法访问。
+// 验证解析器能否正确识别null关键字，并返回正确的状态码和类型。
 static void test_parse_null() {
     lept_value v;
-    v.type = LEPT_FALSE;
-    EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, "null"));
+    v.type = LEPT_FALSE;// 初始化类型（避免未定义行为）
+    EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, "null")); 
+    //解析后的值类型应是LEPT_NULL（对应JSON的null）
     EXPECT_EQ_INT(LEPT_NULL, lept_get_type(&v));
 }
 
+//验证解析器在输入为空或只有空白字符时，能否正确返回 “缺少值” 的错误。
 static void test_parse_expect_value() {
     lept_value v;
 
@@ -69,6 +72,7 @@ static void test_parse_expect_value() {
     EXPECT_EQ_INT(LEPT_NULL, lept_get_type(&v));
 }
 
+//验证解析器对无效输入（如不完整关键字、非法字符）的处理能力。
 static void test_parse_invalid_value() {
     lept_value v;
     v.type = LEPT_FALSE;
@@ -80,6 +84,7 @@ static void test_parse_invalid_value() {
     EXPECT_EQ_INT(LEPT_NULL, lept_get_type(&v));
 }
 
+//JSON 规范要求整个文档只能有一个根值（如null、对象、数组等）。此测试验证解析器能否检测到根值后多余的字符。
 static void test_parse_root_not_singular() {
     lept_value v;
     v.type = LEPT_FALSE;
@@ -87,11 +92,27 @@ static void test_parse_root_not_singular() {
     EXPECT_EQ_INT(LEPT_NULL, lept_get_type(&v));
 }
 
+//true/false 单元测试
+static void test_parse_true(){
+    lept_value v;
+    v.type=LEPT_FALSE;
+    EXPECT_EQ_INT(LEPT_PARSE_OK,lept_parse(&v,"true"));
+    EXPECT_EQ_INT(LEPT_TRUE,lept_get_type(&v));
+}
+static void test_parse_false(){
+    lept_value v;
+    v.type=LEPT_TRUE;
+    EXPECT_EQ_INT(LEPT_PARSE_OK,lept_parse(&v,"false"));
+    EXPECT_EQ_INT(LEPT_FALSE,lept_get_type(&v));
+}
+
 static void test_parse() {
     test_parse_null();
     test_parse_expect_value();
     test_parse_invalid_value();
     test_parse_root_not_singular();
+    test_parse_true();
+    test_parse_false();
 }
 
 int main() {

@@ -34,25 +34,62 @@ static int lept_parse_null(lept_context* c, lept_value* v) {
     v->type = LEPT_NULL;  // 将解析结果类型设为NULL
     return LEPT_PARSE_OK;  // 返回"解析成功"状态
 }
+//true/false 解析
+static int lept_parse_ture(lept_context* c, lept_value* v){
+    EXPECT(c,'t');
+    if (c->json[0] != 'r' || c->json[1] != 'u' || c->json[2] != 'e')
+        return LEPT_PARSE_INVALID_VALUE;
+    c->json += 3;  
+    v->type = LEPT_TRUE;  
+    return LEPT_PARSE_OK;  
+}
+
+static int lept_parse_false(lept_context* c, lept_value* v){
+    EXPECT(c,'f');
+    if (c->json[0] != 'a' || c->json[1] != 'l' || c->json[2] != 's' || c->json[3] != 'e')
+        return LEPT_PARSE_INVALID_VALUE;
+    c->json += 4;  
+    v->type = LEPT_FALSE;  
+    return LEPT_PARSE_OK;  
+}
 
 //根据当前字符决定解析哪种 JSON 值（是null、true、false还是其他类型）。
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*(c->json)) {
         case 'n':  return lept_parse_null(c, v);  // 若当前字符是'n'，则解析为null
+        case 't':  return lept_parse_ture(c,v);
+        case 'f':  return lept_parse_false(c,v);
         case '\0': return LEPT_PARSE_EXPECT_VALUE; // 若已到字符串末尾，返回"预期值"错误
         default:   return LEPT_PARSE_INVALID_VALUE; // 其他字符，返回"无效值"错误
     }
 }
 
-//解析入口函数，协调整个解析流程。
-int lept_parse(lept_value* v, const char* json) {
+// //解析入口函数，协调整个解析流程。
+// int lept_parse(lept_value* v, const char* json) {
+//     lept_context c;
+//     assert(v != NULL);  // 确保输出结果指针v不为NULL（避免空指针访问）
+//     c.json = json;      // 初始化解析上下文，指向JSON字符串起始位置
+//     v->type = LEPT_NULL;  // 初始化结果类型为NULL
+//     lept_parse_whitespace(&c);  // 跳过开头的空白字符
+//     return lept_parse_value(&c, v);  // 解析实际的值并返回结果状态
+// }
+
+//原来的 lept_parse() 只处理了前两部分。我们只需要加入第三部分，解析空白，然后检查 JSON 文本是否完结：
+int lept_parse(lept_value* v,const char* json){
     lept_context c;
-    assert(v != NULL);  // 确保输出结果指针v不为NULL（避免空指针访问）
-    c.json = json;      // 初始化解析上下文，指向JSON字符串起始位置
-    v->type = LEPT_NULL;  // 初始化结果类型为NULL
-    lept_parse_whitespace(&c);  // 跳过开头的空白字符
-    return lept_parse_value(&c, v);  // 解析实际的值并返回结果状态
+    int ret;
+    assert(v!=NULL);
+    c.json=json;
+    v->type=LEPT_NULL;
+    lept_parse_whitespace(&c);
+    if((ret=lept_parse_value(&c,v))==LEPT_PARSE_OK){
+        lept_parse_whitespace(&c);
+        if(*c.json!='\0') 
+            ret=LEPT_PARSE_ROOT_NOT_SINGULAR;
+    }
+    return ret;
 }
+
 
 lept_type lept_get_type(const lept_value* v) {
     assert(v != NULL);  // 确保输入指针v不为NULL
