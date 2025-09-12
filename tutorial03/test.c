@@ -3,6 +3,17 @@
 #include <string.h>
 #include "leptjson.h"
 
+#ifdef _WINDOWS
+#define _CRTDBG_MAP_ALLOC
+#endif
+#include <crtdbg.h>
+
+// 必须在 #include <crtdbg.h> 之前定义！
+// #ifdef：是 “如果定义了” 的意思，用于检查某个宏是否被定义。
+// _WINDOWS：是一个预定义宏（由 Windows 平台的编译器自动定义，如 Visual Studio 的 MSVC 编译器），用于标识当前编译环境是 Windows 系统。
+// 每个 .c 文件是独立的编译单元，_CRTDBG_MAP_ALLOC 宏需要在每个使用 malloc 等函数的 .c 文件中定义，才能确保该文件中的内存分配被正确跟踪。
+// 若某个 .c 文件未配置，该文件中的内存泄漏将无法定位到具体位置（报告中会缺失文件名和行号）。
+
 static int main_ret = 0;
 static int test_count = 0;
 static int test_pass = 0;
@@ -101,11 +112,14 @@ static void test_parse_number() {
         EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, json));\
         EXPECT_EQ_INT(LEPT_STRING, lept_get_type(&v));\
         EXPECT_EQ_STRING(expect, lept_get_string(&v), lept_get_string_length(&v));\
+        printf("test string:");\
+        printf("%s ", lept_get_string(&v));\
+        printf("%lld\n",lept_get_string_length(&v));\
         lept_free(&v);\
     } while(0)
 
 static void test_parse_string() {
-    TEST_STRING("", "\"\"");
+    TEST_STRING("1", "\"1\"");
     TEST_STRING("Hello", "\"Hello\"");
 #if 0
     TEST_STRING("Hello\nWorld", "\"Hello\\nWorld\"");
@@ -178,6 +192,7 @@ static void test_parse_invalid_string_char() {
 #endif
 }
 
+//测试 “将其他类型（字符串）转为 null 类型” 的功能是否正常。
 static void test_access_null() {
     lept_value v;
     lept_init(&v);
@@ -190,10 +205,30 @@ static void test_access_null() {
 static void test_access_boolean() {
     /* \TODO */
     /* Use EXPECT_TRUE() and EXPECT_FALSE() */
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v, "a", 1);
+    lept_set_boolean(&v, 1);
+    EXPECT_TRUE(lept_get_boolean(&v));
+    EXPECT_EQ_INT(LEPT_TRUE, lept_get_type(&v));
+    printf("test access boolean:%s\n",lept_get_boolean(&v)==1?"true":"false");
+    lept_set_boolean(&v, 0);
+    EXPECT_FALSE(lept_get_boolean(&v));
+    EXPECT_EQ_INT(LEPT_FALSE, lept_get_type(&v));
+    lept_free(&v);
 }
+//在编写单元测试时，我们故意先把值设为字符串，那么做可以测试设置其他类型时，有没有调用 lept_free() 去释放内存。
 
 static void test_access_number() {
     /* \TODO */
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v, "a", 1);
+    lept_set_number(&v, 1234.5);
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(&v));
+    EXPECT_EQ_DOUBLE(1234.5, lept_get_number(&v));
+    printf("test access number:%.17g\n",lept_get_number(&v));
+    lept_free(&v);
 }
 
 static void test_access_string() {
@@ -227,7 +262,22 @@ static void test_parse() {
 }
 
 int main() {
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF|_CRTDBG_LEAK_CHECK_DF);
+// 这段代码用于启用内存泄漏检测功能，仅在程序启动时执行一次即可：
+// _CrtSetDbgFlag(...)
+// CRT 库函数，用于设置调试标志，控制内存检测的行为。
+// _CRTDBG_ALLOC_MEM_DF
+// 标志位：启用内存分配跟踪（允许 CRT 记录所有通过 malloc/new 分配的内存块）。
+// _CRTDBG_LEAK_CHECK_DF
+// 标志位：设置程序退出时（main 函数结束后）自动检查内存泄漏，并输出泄漏报告。
     test_parse();
+// Debug 结果：Thread 1 hit Breakpoint 1, main () at f:\vscode_project\json-tutorial\tutorial03\test.c:273
+// 273	    test_parse();
+// 主线程（Thread 1）触发了第 1 个断点，断点位置在 test.c 文件的第 273 行，代码是 test_parse();（调用测试函数 test_parse）。
     printf("%d/%d (%3.2f%%) passed\n", test_pass, test_count, test_pass * 100.0 / test_count);
+    _CrtDumpMemoryLeaks();
     return main_ret;
+     
 }
+//GCC/G++（包括 MinGW、Linux 下的 GCC、WSL 中的 GCC），依赖的是 GNU 的 CRT 实现（如 MinGW 的 msvcrt.dll 是兼容层，核心逻辑和 MSVC 不同）。
+//这个库的设计目标是 “兼容标准 C/C++ 运行时”，没有集成微软专属的 “内存泄漏跟踪逻辑”：

@@ -5,6 +5,12 @@
 #include <stdlib.h>  /* NULL, malloc(), realloc(), free(), strtod() */
 #include <string.h>  /* memcpy() */
 
+#ifdef _WINDOWS
+#define _CRTDBG_MAP_ALLOC
+#endif
+#include <crtdbg.h>
+
+// 宏定义：堆栈初始大小（可由用户在编译时自定义）
 #ifndef LEPT_PARSE_STACK_INIT_SIZE
 #define LEPT_PARSE_STACK_INIT_SIZE 256
 #endif
@@ -16,28 +22,35 @@
 
 typedef struct {
     const char* json;
-    char* stack;
-    size_t size, top;
+    char* stack;       // 动态分配的缓冲区（堆栈的内存空间）
+    size_t size;       // 当前堆栈的总容量（能存储多少字节）
+    size_t top;        // 栈顶位置（已使用的字节数，初始为 0）
 }lept_context;
 
+// 4. 堆栈的核心操作：压入（lept_context_push）与弹出（lept_context_pop）
+// 这两个函数实现了动态堆栈的 “存数据” 和 “取数据”，并处理空间不足时的扩展。
+// 功能：向堆栈压入 size 字节的数据，返回数据的起始地址（为新数据 “预留空间” 并返回空间地址）
 static void* lept_context_push(lept_context* c, size_t size) {
     void* ret;
     assert(size > 0);
-    if (c->top + size >= c->size) {
-        if (c->size == 0)
+    if (c->top + size >= c->size) { // 检查空间是否足够：当前栈顶 + 要压入的大小 >= 总容量 → 空间不足，需要扩展
+        if (c->size == 0) // 首次分配：用初始大小
             c->size = LEPT_PARSE_STACK_INIT_SIZE;
-        while (c->top + size >= c->size)
+        while (c->top + size >= c->size)// 循环扩展：每次按 1.5 倍增大（直到容量足够）
             c->size += c->size >> 1;  /* c->size * 1.5 */
-        c->stack = (char*)realloc(c->stack, c->size);
+        c->stack = (char*)realloc(c->stack, c->size); 
+        // 重新分配内存（realloc：保留原有数据，扩展到新容量）
+        // 注：realloc(NULL, size) 等价于 malloc(size)，所以首次分配无需特殊处理
     }
-    ret = c->stack + c->top;
-    c->top += size;
+    ret = c->stack + c->top;// 计算压入数据的起始地址（栈顶当前位置）
+    c->top += size;  // 栈顶后移（更新已使用大小）
     return ret;
 }
 
 static void* lept_context_pop(lept_context* c, size_t size) {
-    assert(c->top >= size);
-    return c->stack + (c->top -= size);
+    assert(c->top >= size);// 确保栈顶位置 >= 要弹出的大小（否则栈为空或数据不足）
+    c->top -= size;  // 栈顶前移（相当于“弹出”）
+    return c->stack + c->top;  // 返回弹出数据的起始地址
 }
 
 static void lept_parse_whitespace(lept_context* c) {
@@ -91,15 +104,15 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
     const char* p;
     EXPECT(c, '\"');
     p = c->json;
-    for (;;) {
+    for (;;) {//无限循环，直到遇到结尾 " 或错误才退出
         char ch = *p++;
         switch (ch) {
-            case '\"':
+            case '\"':// 读到结尾的 "，表示字符串解析完成
                 len = c->top - head;
                 lept_set_string(v, (const char*)lept_context_pop(c, len), len);
                 c->json = p;
                 return LEPT_PARSE_OK;
-            case '\0':
+            case '\0':// 读到空字符（JSON 字符串提前结束，没有正常的结尾 "）
                 c->top = head;
                 return LEPT_PARSE_MISS_QUOTATION_MARK;
             default:
@@ -107,6 +120,9 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
         }
     }
 }
+// 注意：这段代码是简化版，实际解析器还需要处理：
+// 转义字符（如 \"、\n、\\ 等）：需要识别 \ 开头的转义序列，转换为对应字符（如 \n 转为换行符）；
+// 非法字符（如 ASCII 0-31 的控制字符）：JSON 不允许这些字符直接出现，需返回 LEPT_PARSE_INVALID_STRING_CHAR 错误。
 
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
@@ -135,17 +151,21 @@ int lept_parse(lept_value* v, const char* json) {
             ret = LEPT_PARSE_ROOT_NOT_SINGULAR;
         }
     }
-    assert(c.top == 0);
-    free(c.stack);
+    assert(c.top == 0);  // 断言：解析结束后栈顶必须为 0（所有临时数据都已弹出）
+    free(c.stack);       // 释放堆栈缓冲区（避免内存泄漏）
     return ret;
 }
 
+//作用是安全释放 lept_value 所占用的动态内存，避免内存泄漏
 void lept_free(lept_value* v) {
     assert(v != NULL);
     if (v->type == LEPT_STRING)
         free(v->u.s.s);
     v->type = LEPT_NULL;
 }
+// 释放内存后，将 v 的类型强制设为 LEPT_NULL（空类型），有两个关键作用：
+// 避免野指针访问：如果后续误操作访问 v 的原字符串成员（v->u.s.s），由于类型已改为 LEPT_NULL，可以通过类型检查（如 if (v->type == LEPT_STRING)）避免访问已释放的野指针。
+// 明确状态：标记 v 处于 “空状态”，符合内存释放后的逻辑一致性。
 
 lept_type lept_get_type(const lept_value* v) {
     assert(v != NULL);
@@ -154,11 +174,15 @@ lept_type lept_get_type(const lept_value* v) {
 
 int lept_get_boolean(const lept_value* v) {
     /* \TODO */
-    return 0;
+    assert(v != NULL && (v->type == LEPT_TRUE || v->type == LEPT_FALSE));
+    return v->type == LEPT_TRUE;
 }
 
 void lept_set_boolean(lept_value* v, int b) {
     /* \TODO */
+    assert(v != NULL);
+    lept_free(v);
+    v->type = (b ? LEPT_TRUE : LEPT_FALSE);
 }
 
 double lept_get_number(const lept_value* v) {
@@ -168,6 +192,10 @@ double lept_get_number(const lept_value* v) {
 
 void lept_set_number(lept_value* v, double n) {
     /* \TODO */
+    assert(v != NULL);
+    lept_free(v);
+    v->u.n = n;
+    v->type = LEPT_NUMBER;
 }
 
 const char* lept_get_string(const lept_value* v) {
@@ -180,12 +208,19 @@ size_t lept_get_string_length(const lept_value* v) {
     return v->u.s.len;
 }
 
+//作用是将指定的字符串数据赋值给 lept_value 结构体（用于存储 JSON 解析结果），并确保内存管理的安全性。
 void lept_set_string(lept_value* v, const char* s, size_t len) {
     assert(v != NULL && (s != NULL || len == 0));
     lept_free(v);
-    v->u.s.s = (char*)malloc(len + 1);
+    v->u.s.s = (char*)malloc(len + 1);//+1 是为了在末尾添加 '\0'，兼容 C 语言的空结尾字符串。
     memcpy(v->u.s.s, s, len);
     v->u.s.s[len] = '\0';
     v->u.s.len = len;
     v->type = LEPT_STRING;
 }
+// 使用 memcpy 按字节拷贝：从源字符串 s 拷贝 len 个字节到新分配的内存 v->u.s.s。
+// 为什么用 memcpy 而不是 strcpy？
+// 因为 s 可能包含 '\0' 字符（JSON 字符串允许中间有 '\0'），strcpy 会遇到 '\0' 就停止拷贝，而 memcpy 严格按 len 字节拷贝，确保完整复制。
+// 在拷贝的有效内容后添加 '\0'，让 v->u.s.s 同时满足：
+// JSON 字符串的真实长度（len）；
+// C 语言的空结尾字符串规范（方便不处理 '\0' 的场景直接使用，如 printf("%s", v->u.s.s)）。
