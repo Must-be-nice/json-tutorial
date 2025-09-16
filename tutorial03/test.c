@@ -121,11 +121,15 @@ static void test_parse_number() {
 static void test_parse_string() {
     TEST_STRING("1", "\"1\"");
     TEST_STRING("Hello", "\"Hello\"");
-#if 0
+#if 1
     TEST_STRING("Hello\nWorld", "\"Hello\\nWorld\"");
     TEST_STRING("\" \\ / \b \f \n \r \t", "\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t\"");
 #endif
 }
+// C 语言中，\\ 是一个转义组合，专门用来表示 单个实际的 \ 字符（因为 \ 在 C 里是转义符，不能直接写，必须用两个 \\ 来 “代表” 一个真实的 \）；
+// 后面的 n 就是普通字符 n；所以 \\n 经过 C 编译器解析后，最终会变成 \ 和 n 连在一起的两个字符（即 \n）。
+// 而这个 \n，恰好是 JSON 语法中表示 “换行符” 的标准转义序列 ——JSON 解析器看到 \n 时，才会把它转换成实际的换行符（对应 ASCII 码 0x0A），
+// 最终得到第一个参数 "Hello\nWorld" 里的那种 “包含真实换行符的字符串”。
 
 #define TEST_ERROR(error, json)\
     do {\
@@ -186,7 +190,7 @@ static void test_parse_invalid_string_escape() {
 }
 
 static void test_parse_invalid_string_char() {
-#if 0
+#if 1
     TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x01\"");
     TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x1F\"");
 #endif
