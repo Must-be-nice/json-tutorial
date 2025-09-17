@@ -44,6 +44,7 @@ static void* lept_context_pop(lept_context* c, size_t size) {
     return c->stack + (c->top -= size);
 }
 
+
 static void lept_parse_whitespace(lept_context* c) {
     const char *p = c->json;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
@@ -83,6 +84,8 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
     }
     errno = 0;
     v->u.n = strtod(c->json, NULL);
+
+
     if (errno == ERANGE && (v->u.n == HUGE_VAL || v->u.n == -HUGE_VAL))
         return LEPT_PARSE_NUMBER_TOO_BIG;
     v->type = LEPT_NUMBER;
@@ -92,18 +95,73 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
 
 static const char* lept_parse_hex4(const char* p, unsigned* u) {
     /* \TODO */
+    *u=0;
+    for(int i=0;i<4;i++){
+        char ch=*p++;
+        *u<<=4;
+        if(ch>='0'&&ch<='9') *u|=ch-'0';
+        else if(ch>='a'&&ch<='f') *u|=(unsigned)ch-'a'+10;
+        else if(ch>='A'&&ch<='F') *u|=(unsigned)ch-'A'+10;
+        else return NULL;
+    }
     return p;
 }
+// 循环读取 4 个字符，每次处理一个十六进制字符：
+// 将当前结果左移 4 位（相当于乘以 16）
+// 将字符转换为对应的十六进制数值（0-15）
+// 通过按位或运算将新数值拼接到结果中
+// 若遇到非十六进制字符（非 0-9、A-F、a-f），返回 NULL 表示失败
+
+// static const char* lept_parse_hex4(const char* p, unsigned* u){
+//     // // 先检查第一个字符是否为合法十六进制字符（非空白且在0-9/A-F/a-f范围内）
+//     if (!((p[0] >= '0' && p[0] <= '9') || 
+//           (p[0] >= 'A' && p[0] <= 'F') || 
+//           (p[0] >= 'a' && p[0] <= 'f'))) {
+//         return NULL;
+//     }
+//     char* end;
+//     *u = (unsigned)strtol(p, &end, 16);
+//     return end == p + 4 ? end : NULL;
+// }
+// strtol 将字符串 nptr 按照指定的进制（base）转换为长整数，
+// 并通过 endptr 返回转换终止的位置（即第一个无法转换的字符地址）。
+//但这个实现会错误地接受 "\u 123" 这种不合法的 JSON，因为 strtol() 会跳过开始的空白。
+//所以还需要检测第一个字符是否 [0-9A-Fa-f]
 
 static void lept_encode_utf8(lept_context* c, unsigned u) {
     /* \TODO */
+    if(u<=0x7F)
+        PUTC(c,u&0xFF);
+    else if(u<=0x7FF){
+        PUTC(c,(unsigned char)0xC0|((u>>6)&0x1F));
+        PUTC(c,(unsigned char)0x80|(u&0x3F));
+    }
+    else if(u<=0xFFFF){
+        PUTC(c,(unsigned char)0xE0|(u>>12)&0x0F);
+        PUTC(c,(unsigned char)0x80|((u>>6)&0x3F));
+        PUTC(c,(unsigned char)0x80|(u&0x3F));
+    }
+    else{
+        assert(u<=0x10FFFF);//U+10FFFF是目前Unicode的最大码点
+        PUTC(c,(unsigned char)0xF0|((u>>18)&0x07));
+        PUTC(c,(unsigned char)0x80|((u>>12)&0x3F));
+        PUTC(c,(unsigned char)0x80|((u>>6)&0x3F));
+        PUTC(c,(unsigned char)0x80|(u&0x3F));
+    }
 }
+// UTF-8 采用 “前缀标识 + 数据位” 的编码方式，不同范围的码点使用不同长度的字节序列：
+// 1 字节：用于 ASCII 字符（0x00 ~ 0x7F），前缀为 0xxxxxxx；
+// 2 字节：用于 0x080 ~ 0x7FF，前缀为 110xxxxx 10xxxxxx；(这个范围里最大的码点只有 11 位二进制，并不是 12 位。)
+// 3 字节：用于 0x0800 ~ 0xFFFF，前缀为 1110xxxx 10xxxxxx 10xxxxxx；
+// 4 字节：用于 0x010000 ~ 0x10FFFF，前缀为 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx。
+// 其中，x 表示实际数据位，函数通过位运算提取码点的对应比特位，拼接上前缀后生成 UTF-8 字节。
 
-#define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
+#define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)\
+//简单的重构，把返回错误码的处理抽取为宏
 
 static int lept_parse_string(lept_context* c, lept_value* v) {
     size_t head = c->top, len;
-    unsigned u;
+    unsigned u, u2;
     const char* p;
     EXPECT(c, '\"');
     p = c->json;
@@ -129,6 +187,18 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                         if (!(p = lept_parse_hex4(p, &u)))
                             STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
                         /* \TODO surrogate handling */
+                        if(u>=0xD800&&u<=0xDBFF){
+                            if(*p++!='\\')
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            if(*p++!='u')
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            if (!(p = lept_parse_hex4(p, &u2)))
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                            if (u2 < 0xDC00 || u2 > 0xDFFF)
+                                STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                            u = 0x10000 + (u-0xD800) * 0x400 + (u2-0xDC00);
+                            //位运算版本：u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+                        }
                         lept_encode_utf8(c, u);
                         break;
                     default:
@@ -144,6 +214,17 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
         }
     }
 }
+//处理 \uXXXX 形式的 Unicode 转义序列：
+// lept_parse_hex4(p, &u) 解析后续 4 位十六进制数字（0-9、a-f、A-F），转换为 Unicode 码点 u（如 \u4E2D 解析为 u=0x4E2D）。
+// 若 4 位字符不是十六进制数，返回 “无效 Unicode 十六进制” 错误。
+// lept_encode_utf8 将码点 u 转换为 UTF-8 编码的字节序列，写入缓冲区（供后续作为字符串存储）。
+// TODO 注释说明：当前未处理 “代理对”（超出 BMP 的码点，需两个 \uXXXX 表示），仅支持 BMP 内的码点（U+0000~U+FFFF）。
+
+//背景：Unicode 中，U+10000~U+10FFFF 的字符无法用单个 \uXXXX 表示（XXXX 最大为 FFFF），需用 两个 16 位代理项 组合表示：
+// 高代理项（High Surrogate）：U+D800~U+DBFF；
+// 低代理项（Low Surrogate）：U+DC00~U+DFFF。
+//我们用下列公式把代理对 (H, L) 变换成真实的码点：
+//codepoint = 0x10000 + (H − 0xD800) × 0x400 + (L − 0xDC00)
 
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
@@ -151,7 +232,7 @@ static int lept_parse_value(lept_context* c, lept_value* v) {
         case 'f':  return lept_parse_literal(c, v, "false", LEPT_FALSE);
         case 'n':  return lept_parse_literal(c, v, "null", LEPT_NULL);
         default:   return lept_parse_number(c, v);
-        case '"':  return lept_parse_string(c, v);
+        case '\"':  return lept_parse_string(c, v);
         case '\0': return LEPT_PARSE_EXPECT_VALUE;
     }
 }

@@ -105,6 +105,9 @@ static void test_parse_number() {
         EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, json));\
         EXPECT_EQ_INT(LEPT_STRING, lept_get_type(&v));\
         EXPECT_EQ_STRING(expect, lept_get_string(&v), lept_get_string_length(&v));\
+        printf("test string:");\
+        printf("%s ", lept_get_string(&v));\
+        printf("%lld\n",lept_get_string_length(&v));\
         lept_free(&v);\
     } while(0)
 
