@@ -34,6 +34,12 @@ static int test_pass = 0;
 #else
 #define EXPECT_EQ_SIZE_T(expect, actual) EXPECT_EQ_BASE((expect) == (actual), (size_t)expect, (size_t)actual, "%zu")
 #endif
+//_MSC_VER是微软 MSVC 编译器的预定义宏（Microsoft C Version），用于标识当前编译环境为 MSVC。
+// 这段代码通过判断该宏是否定义，区分不同编译器环境。
+// 不同编译器对size_t的格式化输出语法有不同规定：
+// 标准 C（C99 及以上）规定用%zu；
+// 微软 MSVC 编译器历史上不支持%zu（直到较新版本才支持），传统上使用非标准的%Iu。
+// 如果直接写死%zu，在旧版 MSVC 中会导致格式化错误；如果写死%Iu，在 GCC/Clang 中会报错。
 
 static void test_parse_null() {
     lept_value v;
@@ -129,14 +135,15 @@ static void test_parse_string() {
 
 static void test_parse_array() {
     lept_value v;
-
     lept_init(&v);
     EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, "[ ]"));
     EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(&v));
     EXPECT_EQ_SIZE_T(0, lept_get_array_size(&v));
     lept_free(&v);
 }
-
+// 由于数组是复合的类型，不能使用一个宏去测试结果，请使用各个 API 检查解析后的内容。
+// [ null , false , true , 123 , "abc" ]
+// [ [ ] , [ 0 ] , [ 0 , 1 ] , [ 0 , 1 , 2 ] ]
 #define TEST_ERROR(error, json)\
     do {\
         lept_value v;\

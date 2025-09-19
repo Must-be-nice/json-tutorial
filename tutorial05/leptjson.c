@@ -187,6 +187,8 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     size_t size = 0;
     int ret;
     EXPECT(c, '[');
+    //lept_parse_whitespace(c);
+    // 处理空数组 []
     if (*c->json == ']') {
         c->json++;
         v->type = LEPT_ARRAY;
@@ -197,10 +199,13 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     for (;;) {
         lept_value e;
         lept_init(&e);
+        //lept_parse_whitespace(c);
         if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
             return ret;
+        // 将解析好的元素压入上下文栈（暂存，避免频繁分配内存）
         memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
         size++;
+        //lept_parse_whitespace(c);
         if (*c->json == ',')
             c->json++;
         else if (*c->json == ']') {
@@ -208,6 +213,8 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
             v->type = LEPT_ARRAY;
             v->u.a.size = size;
             size *= sizeof(lept_value);
+            //栈中临时存储的 lept_value 二进制数据（字节流），
+            //通过 memcpy 完整复制到新分配的 lept_value 数组内存中。
             memcpy(v->u.a.e = (lept_value*)malloc(size), lept_context_pop(c, size), size);
             return LEPT_PARSE_OK;
         }
@@ -215,6 +222,11 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
             return LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
     }
 }
+//（[123, "hello", true, [456]]），元素之间通过 , 和括号分隔，没有额外的 \0 作为结尾标记。
+// 当解析数组的一个元素（如一个数字、字符串或嵌套数组）时，会生成一个 lept_value 结构体（比如临时变量 e）；
+// 通过 lept_context_push(c, sizeof(lept_value)) 函数，会在 c.stack 中分配一块大小为 sizeof(lept_value) 的字节空间，
+// 然后用 memcpy 将 e 的完整数据（包括 type 和共用体 u）复制到这块字节空间中；
+// 因此，c.stack 中存储的是 lept_value 结构体的二进制数据（连续的字节流），
 
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
