@@ -189,7 +189,7 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     size_t size = 0;
     int ret;
     EXPECT(c, '[');
-    lept_parse_whitespace(c);
+    lept_parse_whitespace(c);//处理 [ 与第一个元素之间的空白字符。
     // 处理空数组 []
     if (*c->json == ']') {
         c->json++;
@@ -201,15 +201,16 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     for (;;) {
         lept_value e;
         lept_init(&e);
-        lept_parse_whitespace(c);
         if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
             break;
+        lept_parse_whitespace(c);//处理元素与后续符号（, 或 ]）之间的空白字符。
         // 将解析好的元素压入上下文栈（暂存，避免频繁分配内存）
         memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
         size++;
-        lept_parse_whitespace(c);
-        if (*c->json == ',')
+        if (*c->json == ','){
             c->json++;
+            lept_parse_whitespace(c);//处理 , 与下一个元素之间的空白字符。
+        }
         else if (*c->json == ']') {
             c->json++;
             v->type = LEPT_ARRAY;
@@ -311,7 +312,7 @@ void lept_free(lept_value* v) {
         case LEPT_ARRAY:
             for(i=0;i<v->u.a.size;i++)
                 lept_free(&v->u.a.e[i]);
-            free(&v->u.a.e);
+            free(v->u.a.e);
             break;
         default: break;   
     }
@@ -319,6 +320,9 @@ void lept_free(lept_value* v) {
 }
 // lept_parse_array() 用 malloc()分配的内存没有被释放：
 // 对于数组，我们应该先把数组内的元素通过递归调用 lept_free() 释放，然后才释放本身的 v->u.a.e
+// v->u.a.e 是 lept_value* 类型的指针，指向一个动态分配的 lept_value 数组（数组中的每个元素都是 lept_value 结构体）。
+// 如果 v->u.a.e 指向数组首地址 0x1000，那么 v->u.a.e[0] 就是 0x1000 地址处的 lept_value 结构体；
+// v->u.a.e[1] 是 0x1000 + sizeof(lept_value) 地址处的结构体。
 
 lept_type lept_get_type(const lept_value* v) {
     assert(v != NULL);
