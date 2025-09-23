@@ -182,12 +182,14 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
 }
 
 static int lept_parse_value(lept_context* c, lept_value* v);
+// 注意到，lept_parse_value() 会调用 lept_parse_array()，而 lept_parse_array() 又会调用 lept_parse_value()，
+// 这是互相引用，所以必须要加入函数前向声明。
 
 static int lept_parse_array(lept_context* c, lept_value* v) {
     size_t size = 0;
     int ret;
     EXPECT(c, '[');
-    //lept_parse_whitespace(c);
+    lept_parse_whitespace(c);
     // 处理空数组 []
     if (*c->json == ']') {
         c->json++;
@@ -199,13 +201,13 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     for (;;) {
         lept_value e;
         lept_init(&e);
-        //lept_parse_whitespace(c);
+        lept_parse_whitespace(c);
         if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
-            return ret;
+            break;
         // 将解析好的元素压入上下文栈（暂存，避免频繁分配内存）
         memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
         size++;
-        //lept_parse_whitespace(c);
+        lept_parse_whitespace(c);
         if (*c->json == ',')
             c->json++;
         else if (*c->json == ']') {
@@ -218,15 +220,53 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
             memcpy(v->u.a.e = (lept_value*)malloc(size), lept_context_pop(c, size), size);
             return LEPT_PARSE_OK;
         }
-        else
-            return LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+        else{ // 既不是逗号也不是右括号，语法错误
+            ret=LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+            break;
+        }   
     }
+    // 释放压入栈中的值
+    for (size_t i=0; i < size; i++) {
+        lept_value* e = (lept_value*)lept_context_pop(c, sizeof(lept_value));
+        lept_free(e);
+    }
+    return ret;
 }
 //（[123, "hello", true, [456]]），元素之间通过 , 和括号分隔，没有额外的 \0 作为结尾标记。
 // 当解析数组的一个元素（如一个数字、字符串或嵌套数组）时，会生成一个 lept_value 结构体（比如临时变量 e）；
 // 通过 lept_context_push(c, sizeof(lept_value)) 函数，会在 c.stack 中分配一块大小为 sizeof(lept_value) 的字节空间，
 // 然后用 memcpy 将 e 的完整数据（包括 type 和共用体 u）复制到这块字节空间中；
 // 因此，c.stack 中存储的是 lept_value 结构体的二进制数据（连续的字节流），
+// 需要加入 3 个 lept_parse_whitespace() 调用，分别是解析 [ 之后，元素之后，以及 , 之后
+
+// e 的结构体数据被复制到堆中，堆中的 lept_value 结构体内部指针指向数据堆内存。所以在释放 free(c.stack)
+// 当调用 free(c.stack) 时，释放的是上下文栈（c->stack）这块堆内存中存储的 lept_value e 的副本，而在此之前，
+// 这些副本已经通过 memcpy 完整复制到了 v 指向的最终堆内存中。这两个副本是完全独立的，释放上下文栈中的副本不会影响 v 中的副本及其关联的堆内存。
+
+// 解析失败时 不会复制给v 然后c指向堆区中解析正确的lept_value和解析到一半的 lept_value可能还指向一个堆区的 
+// 所以需要lept_free中的 for(i=0;i<v->u.a.size;i++) lept_free(&v->u.a.e[i]); 
+// 后面的free(c.stack);不能完全释放这些
+// 在 lept_parse_array 中，原本遇到解析失败时，会直接返回错误码。我们把它改为 break 离开循环，
+// 在循环结束后的地方用 lept_free() 释放从堆栈弹出的值，然后才返回错误码。
+// 这样就能保证即使在解析数组过程中遇到错误，也不会泄漏
+
+// for (;;) {
+//     /* bug! */
+//     lept_value* e = lept_context_push(c, sizeof(lept_value));  // 1. 获取栈中内存指针
+//     lept_init(e);
+//     size++;
+//     if ((ret = lept_parse_value(c, e)) != LEPT_PARSE_OK)  // 2. 使用指针e
+//         return ret;
+//     /* ... */
+// }
+// lept_context_push 函数的作用是在栈（c->stack）中分配一块内存，并返回指向该内存的指针 e。
+// 栈的底层实现通常是一块动态分配的连续内存（通过 malloc/realloc 管理）。当栈空间不足时，
+// lept_context_push 会调用 realloc 扩容 ——此时原栈内存可能被迁移到新地址，而之前返回的指针 e 仍指向旧地址，变成悬挂指针。
+// 后续 lept_parse_value(c, e) 通过 e 写入数据时，会访问已失效的旧地址，导致非法内存访问（可能触发崩溃或数据错乱）。
+// 非法内存访问发生在：
+// e 指向旧栈地址 → 2. 内部操作触发 realloc 扩容，栈地址迁移 → 3. 继续通过 e 写入数据（此时 e 已失效） 
+// 这就是为什么 “返回栈内指针并持有” 的设计危险 —— 只要中间操作可能触发扩容，后续对指针的访问就可能非法。
+// 解决的核心是避免持有动态扩容内存的指针，改用 “栈外临时存储 + 复制到栈” 的方式。
 
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
@@ -262,11 +302,23 @@ int lept_parse(lept_value* v, const char* json) {
 }
 
 void lept_free(lept_value* v) {
+    size_t i;
     assert(v != NULL);
-    if (v->type == LEPT_STRING)
-        free(v->u.s.s);
+    switch(v->type){
+        case LEPT_STRING:
+            free(v->u.s.s);
+            break;
+        case LEPT_ARRAY:
+            for(i=0;i<v->u.a.size;i++)
+                lept_free(&v->u.a.e[i]);
+            free(&v->u.a.e);
+            break;
+        default: break;   
+    }
     v->type = LEPT_NULL;
 }
+// lept_parse_array() 用 malloc()分配的内存没有被释放：
+// 对于数组，我们应该先把数组内的元素通过递归调用 lept_free() 释放，然后才释放本身的 v->u.a.e
 
 lept_type lept_get_type(const lept_value* v) {
     assert(v != NULL);
