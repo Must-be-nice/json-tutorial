@@ -222,9 +222,11 @@ static void test_parse_object() {
             EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(ov));
             EXPECT_EQ_DOUBLE(i + 1.0, lept_get_number(ov));
         }
-    }
+    }// 创建一个局部作用域，用于隔离变量 o 的生命周期
     lept_free(&v);
 }
+// 两个相邻的字符串字面量（用双引号包裹）会被编译器自动合并成一个完整的字符串，中间的空格、换行等空白会被忽略。
+// { "n" : null , "f" : false , "t" : true , "i" : 123 , "s" : "abc", "a" : [ 1, 2, 3 ],"o" : { "1" : 1, "2" : 2, "3" : 3 } }
 
 #define TEST_ERROR(error, json)\
     do {\
@@ -352,7 +354,7 @@ static void test_parse() {
     test_parse_number();
     test_parse_string();
     test_parse_array();
-#if 0
+#if 1
     test_parse_object();
 #endif
 
@@ -366,7 +368,7 @@ static void test_parse() {
     test_parse_invalid_unicode_hex();
     test_parse_invalid_unicode_surrogate();
     test_parse_miss_comma_or_square_bracket();
-#if 0
+#if 1
     test_parse_miss_key();
     test_parse_miss_colon();
     test_parse_miss_comma_or_curly_bracket();

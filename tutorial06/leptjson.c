@@ -127,8 +127,8 @@ static void lept_encode_utf8(lept_context* c, unsigned u) {
 
 #define STRING_ERROR(ret) do { c->top = head; return ret; } while(0)
 
-static int lept_parse_string(lept_context* c, lept_value* v) {
-    size_t head = c->top, len;
+static int lept_parse_string_raw(lept_context* c, char** str, size_t* len) {
+    size_t head = c->top;
     unsigned u, u2;
     const char* p;
     EXPECT(c, '\"');
@@ -137,8 +137,8 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
         char ch = *p++;
         switch (ch) {
             case '\"':
-                len = c->top - head;
-                lept_set_string(v, (const char*)lept_context_pop(c, len), len);
+                *len = c->top - head;
+                *str=lept_context_pop(c, *len);
                 c->json = p;
                 return LEPT_PARSE_OK;
             case '\\':
@@ -180,6 +180,27 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
         }
     }
 }
+
+static int lept_parse_string(lept_context* c, lept_value* v){
+    int ret;
+    char* s;
+    size_t len;
+    if((ret=lept_parse_string_raw(c,&s,&len))==LEPT_PARSE_OK)
+        lept_set_string(v,s,len);
+    return ret;
+}
+// 在当前代码中，lept_parse_string 函数同时承担了两个职责：
+// 1. 解析 JSON 字符串的原始内容（处理引号、转义、Unicode 等）
+// 2. 将解析结果封装到 lept_value 中（设置 type、分配内存等）'
+// 但在解析 JSON 对象的键（如 {"name": "Alice"} 中的 "name"）时，问题就出现了：
+// 键的类型固定为字符串，无需 lept_value 中的 type 字段（冗余）；
+// 若强行用 lept_value 存储键，会多占用内存（type 字段是多余的）；
+// 原函数 lept_parse_string 直接返回 lept_value，无法单独获取字符串的原始内容（char* 和长度），
+// 导致解析键时需要重复编写字符串解析逻辑。
+
+//通过 “提取函数” 重构，将 lept_parse_string 拆分为两个函数：
+// lept_parse_string_raw：专注于 “解析 JSON 字符串的原始内容”，输出字符串指针和长度；
+// lept_parse_string：基于前者的结果，专注于 “将原始内容封装为 lept_value”。
 
 static int lept_parse_value(lept_context* c, lept_value* v);
 
@@ -227,35 +248,86 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
 }
 
 static int lept_parse_object(lept_context* c, lept_value* v) {
-    size_t size;
+    size_t size,i;
     lept_member m;
     int ret;
     EXPECT(c, '{');
     lept_parse_whitespace(c);
+    // 处理空对象（{}）
     if (*c->json == '}') {
         c->json++;
         v->type = LEPT_OBJECT;
-        v->u.o.m = 0;
+        v->u.o.m = NULL;
         v->u.o.size = 0;
         return LEPT_PARSE_OK;
     }
     m.k = NULL;
     size = 0;
     for (;;) {
+        char *str;
         lept_init(&m.v);
-        /* \todo parse key to m.k, m.klen */
-        /* \todo parse ws colon ws */
-        /* parse value */
+        /* \todo parse key to m.k, m.klen */  // 待实现：解析键（key）
+        if(*c->json!='"'){
+            ret=LEPT_PARSE_MISS_KEY;
+            break;
+        }
+        if((ret=lept_parse_string_raw(c,&str,&m.klen))!=LEPT_PARSE_OK)
+            break;
+        memcpy(m.k= (char*)malloc(m.klen + 1), str, m.klen);
+        m.k[m.klen] = '\0';
+        /* \todo parse ws colon ws */         // 待实现：解析冒号（:）及前后空白
+        lept_parse_whitespace(c);
+        if(*c->json!=':'){
+            ret=LEPT_PARSE_MISS_COLON;
+            break;
+        }
+        c->json++;
+        lept_parse_whitespace(c);
+        /* parse value */                     // 已实现框架：解析值（value）
+        // 解析“值”（调用 lept_parse_value 递归解析任意类型的值）
         if ((ret = lept_parse_value(c, &m.v)) != LEPT_PARSE_OK)
             break;
+        // 将当前键值对存入解析器的栈中（临时存储，避免频繁动态内存分配）
         memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member));
         size++;
-        m.k = NULL; /* ownership is transferred to member on stack */
-        /* \todo parse ws [comma | right-curly-brace] ws */
+        m.k = NULL;//既不释放内存，也不影响副本的所有权，只是防止局部变量 m 误操作已转移所有权的堆内存。
+        /* \todo parse ws [comma | right-curly-brace] ws */ //解析逗号或右花括号
+        lept_parse_whitespace(c);
+        if(*c->json==','){
+            c->json++;
+            lept_parse_whitespace(c);
+        }
+        else if(*c->json=='}'){
+            size_t s=sizeof(lept_member)*size;
+            c->json++;
+            v->type=LEPT_OBJECT;
+            v->u.o.size=size;
+            memcpy(v->u.o.m=(lept_member*)malloc(s),lept_context_pop(c,s),s);
+            return LEPT_PARSE_OK;
+        }
+        else{
+            ret=LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET;
+            break;
+        }
+    }   
+    /* \todo Pop and free members on the stack */ //释放临时的 key 字符串及栈上的成员
+    free(m.k); //不需要先检查 m.k != NULL，因为 free(NULL) 是完全合法的。
+    for (i = 0; i < size; i++){
+        lept_member* m = (lept_member*)lept_context_pop(c, sizeof(lept_member));
+        free(m->k);
+        lept_free(&m->v);
     }
-    /* \todo Pop and free members on the stack */
+    v->type = LEPT_NULL;
     return ret;
 }
+// m 是栈上的临时变量，用于逐个解析键值对；
+// 解析器栈（c->stack）用于临时缓存所有键值对的副本（浅拷贝，指针指向原始数据）；
+// 最终所有键值对会从解析器栈转移到堆内存，由 lept_value 持有，确保函数退出后数据仍可访问；
+// 复杂类型（数组、对象）的值本身就存储在堆内存中，整个过程中仅复制指针，不复制数据内容（避免内存浪费）。
+
+// 用这个 if ((ret = lept_parse_string_raw(c, &m.k, &m.klen)) != LEPT_PARSE_OK)
+// 导致 m.k 直接指向 c 的栈内存（而非堆内存）
+// 解析器栈（c->stack）在函数退出时会被释放，导致 m.k 指向的内存失效，出现悬空指针。
 
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
@@ -302,6 +374,13 @@ void lept_free(lept_value* v) {
             for (i = 0; i < v->u.a.size; i++)
                 lept_free(&v->u.a.e[i]);
             free(v->u.a.e);
+            break;
+        case LEPT_OBJECT: //需要在 lept_free() 释放 JSON 对象的成员（包括键及值）
+            for (i = 0; i < v->u.o.size; i++) {
+                free(v->u.o.m[i].k);
+                lept_free(&v->u.o.m[i].v);
+            }
+            free(v->u.o.m);
             break;
         default: break;
     }
