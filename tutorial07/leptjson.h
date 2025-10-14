@@ -70,3 +70,6 @@ size_t lept_get_object_key_length(const lept_value* v, size_t index);
 lept_value* lept_get_object_value(const lept_value* v, size_t index);
 
 #endif /* LEPTJSON_H__ */
+
+// 我们在此单元中简介了 JSON 的生成功能和 leptjson 中的实现方式。
+//leptjson 重复利用了 lept_context 中的数据结构作为输出缓冲，可以节省代码量。

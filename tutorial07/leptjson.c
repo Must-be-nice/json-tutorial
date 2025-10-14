@@ -23,6 +23,7 @@
 #define ISDIGIT1TO9(ch)     ((ch) >= '1' && (ch) <= '9')
 #define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
 #define PUTS(c, s, len)     memcpy(lept_context_push(c, len), s, len)
+// PUTS 宏的作用是将一个已知长度的字符串（s）快速写入上下文（c）的缓存栈中，
 
 typedef struct {
     const char* json;
@@ -348,22 +349,119 @@ int lept_parse(lept_value* v, const char* json) {
 
 static void lept_stringify_string(lept_context* c, const char* s, size_t len) {
     /* ... */
+    size_t i;
+    assert(s != NULL);
+    PUTC(c, '\"');
+    for(int i=0;i<len;i++){
+        unsigned char ch=(unsigned char)s[i];
+        switch(ch){
+            case '\"':PUTS(c,"\\\"",2);break;
+            case '\\':PUTS(c,"\\\\",2);break;
+            case '\b':PUTS(c,"\\b",2);break;
+            case '\f':PUTS(c,"\\f",2);break;
+            case '\n':PUTS(c,"\\n",2);break;
+            case '\r':PUTS(c,"\\r",2);break;
+            case '\t':PUTS(c,"\\t",2);break;
+            default:
+                if(ch<0x20) { 
+                    //控制字符（ASCII < 0x20）：如 BEL（\a，0x07）、垂直制表符（\v，0x0B）等不可见字符，JSON 要求用 Unicode 转义序列 \uXXXX 表示（XXXX 是 4 位十六进制数）
+                    char buffer[7];
+                    sprintf(buffer, "\\u%04X", ch);
+                    PUTS(c, buffer, 6);
+                }
+                //注意到，十六进位输出的字母可以用大写或小写，我们这里选择了大写，所以 roundtrip 测试时也用大写。
+                //但这个并不是必然的，输出小写（用 "\\u%04x"）也可以
+                else 
+                    PUTC(c,ch); //其他字符（ASCII ≥ 0x20）：直接输出 不以\uxxxx形式输出
+                break;
+        }
+    }
+    PUTC(c, '\"');
 }
 
+// 优化，lept_stringify_string() 实现中，每次输出一个字符／字符串，都要调用 lept_context_push()。
+// 如果我们使用一些性能剖测工具，也可能会发现这个函数消耗较多 CPU。
+// 所以，一个优化的点子是，预先分配足够的内存，每次加入字符就不用做这个检查了。但多大的内存才足够呢？我们可以看到，每个字符可生成最长的形式是 \u00XX，占 6 个字符，
+// 再加上前后两个双引号，也就是共 len * 6 + 2 个输出字符。那么，使用 char* p = lept_context_push() 作一次分配后，便可以用 *p++ = c 去输出字符了。最后，再按实际输出量调整堆栈指针。
+// 另一个小优化点，是自行编写十六进位输出，避免了 printf() 内解析格式的开销。
+// 第一个优化采取空间换时间的策略，对于只含一个字符串的JSON，很可能会分配多 6 倍内存；但对于正常含多个值的 JSON，多分配的内存可在之后的值所利用，不会造成太多浪费。
+// 而第二个优化的缺点，就是有稍增加了一点程序体积。
+/*static void lept_stringify_string(lept_context* c, const char* s, size_t len) {
+    static const char hex_digits[] ={'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    size_t i,size=len*6+2;
+    char* head, *p;
+    assert(s != NULL);
+    p = head = lept_context_push(c, size); // "\u00xx..." 
+    *p++ = '\"';
+    for(int i=0;i<len;i++){
+        unsigned char ch=(unsigned char)s[i];
+        switch(ch){
+            case '\"':*p++ = '\\'; *p++ = '\"';break;
+            case '\\':*p++ = '\\'; *p++ = '\\';break;
+            case '\b':*p++ = '\\'; *p++ = 'b';break;
+            case '\f':*p++ = '\\'; *p++ = 'f';break;
+            case '\n':*p++ = '\\'; *p++ = 'n';break;
+            case '\r':*p++ = '\\'; *p++ = 'r';break;
+            case '\t':*p++ = '\\'; *p++ = 't';break;
+            default:
+                if(ch<0x20) { 
+                    //控制字符（ASCII < 0x20）：如 BEL（\a，0x07）、垂直制表符（\v，0x0B）等不可见字符，JSON 要求用 Unicode 转义序列 \uXXXX 表示（XXXX 是 4 位十六进制数）
+                    *p++ = '\\'; *p++ = 'u'; *p++ = '0'; *p++ = '0';
+                    *p++ = hex_digits[ch >> 4];// 高 4 位 → 十六进制字符
+                    *p++ = hex_digits[ch & 0x0F];// 低 4 位 → 十六进制字符
+                }
+                //注意到，十六进位输出的字母可以用大写或小写，我们这里选择了大写，所以 roundtrip 测试时也用大写。
+                //但这个并不是必然的，输出小写（用 "\\u%04x"）也可以
+                else 
+                    *p++ = s[i]; //其他字符（ASCII ≥ 0x20）：直接输出 不以\uxxxx形式输出
+                break;
+        }
+    }
+    *p++ = '\"';
+    c->top +=size-(p - head);
+    //p - head：实际使用的内存字节数（从起始地址 head 到当前指针 p 的距离）。
+    //size - (p - head)：预分配内存中未使用的字节数。
+    //通过 c->top -= 未使用字节数调整栈顶，确保上下文栈只记录实际使用的内存，避免浪费。
+}*/
+
 static void lept_stringify_value(lept_context* c, const lept_value* v) {
+    size_t i;
     switch (v->type) {
-        case LEPT_NULL:   PUTS(c, "null",  4); break;
+        case LEPT_NULL:   PUTS(c, "null",  4); break;//"null"（字符串常量，类型是 const char*，本质是指向字符数组首地址的指针）符合memcpy()的参数要求
         case LEPT_FALSE:  PUTS(c, "false", 5); break;
         case LEPT_TRUE:   PUTS(c, "true",  4); break;
         case LEPT_NUMBER: c->top -= 32 - sprintf(lept_context_push(c, 32), "%.17g", v->u.n); break;
+        // 在上下文 c 的缓存栈（c->stack）中预留 32 字节的空间，用于临时存储格式化后的数字字符串。
+        // 存储在 v->u.n 中的数字为 double 类型,double类型的数字转换为字符串时，最长不会超过 31 字节
+        // sprintf 函数的核心工作原理是按照指定的格式字符串，将可变参数列表中的数据转换为字符串，并写入目标缓冲区，同时会自动添加一个 \0 作为字符串结束符
+        // 返回值：成功时返回写入的字符数（不含 \0），失败时返回负数。
         case LEPT_STRING: lept_stringify_string(c, v->u.s.s, v->u.s.len); break;
         case LEPT_ARRAY:
-            /* ... */
+            /* 生成数组也是非常简单，只要输出 [ 和 ]，中间对逐个子值递归调用 lept_stringify_value()。
+            只要注意在第一个元素后才加入 ,*/
+            PUTC(c, '[');
+            for(i=0;i<v->u.a.size;i++){ // 遍历数组的每个元素（size 是数组长度）
+                if(i>0) // 从第二个元素开始，在前面添加逗号分隔符
+                    PUTC(c,',');
+                lept_stringify_value(c,&v->u.a.e[i]);// 递归序列化当前元素
+            }
+            PUTC(c,']');
             break;
         case LEPT_OBJECT:
-            /* ... */
+            /*对象也仅是多了一个键和 */
+            PUTC(c,'{');
+            for(i=0;i<v->u.o.size;i++){
+                if(i>0)
+                    PUTC(c,',');
+                lept_stringify_string(c,v->u.o.m[i].k,v->u.o.m[i].klen);
+                PUTC(c,':');
+                lept_stringify_value(c,&v->u.o.m[i].v);
+            }
+            PUTC(c,'}');
             break;
         default: assert(0 && "invalid type");
+        //处理意外情况的防御性编程手段
+        //字符串 "invalid type" 的作用是：当断言失败时，这条字符串会出现在错误信息中，提示 “无效的类型”，帮助开发者定位问题
     }
 }
 
@@ -375,9 +473,15 @@ char* lept_stringify(const lept_value* v, size_t* length) {
     lept_stringify_value(&c, v);
     if (length)
         *length = c.top;
+    // 传入一个有效指针（如 size_t len; lept_stringify(v, &len);），主动获取长度。
+    // 传入 NULL（如 lept_stringify(v, NULL);），表示不需要长度信息。这个长度不包含最终添加的 \0 结束符
     PUTC(&c, '\0');
     return c.stack;
 }
+// 我们在前 6 个单元实现了一个合乎标准的 JSON 解析器，
+// 它把 JSON 文本解析成一个树形数据结构，整个结构以 lept_value 的节点组成。
+// JSON 生成器（generator）负责相反的事情，就是把树形数据结构转换成 JSON 文本。这个过程又称为「字符串化（stringify）」。
+// 为了简单起见，我们不做换行、缩进等美化（prettify）处理，因此它生成的 JSON 会是单行、无空白字符的最紧凑形式。
 
 void lept_free(lept_value* v) {
     size_t i;

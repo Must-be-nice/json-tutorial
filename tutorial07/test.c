@@ -235,6 +235,9 @@ static void test_parse_object() {
         EXPECT_EQ_INT(LEPT_NULL, lept_get_type(&v));\
         lept_free(&v);\
     } while(0)
+// 解析阶段：\u0041 被解析为 A，\u4E2D 被解析为 中（内存中是 UTF-8 编码）。
+// 序列化阶段：A 和 中 都是可直接显示的字符（≥ 0x20），因此 json2 是 "A中"。
+// 对比结果：原始 json 是 "\\u0041\\u4E2D"，json2 是 "A中"—— 字节序列完全不同，EXPECT_EQ_STRING 会对比失败。
 
 static void test_parse_expect_value() {
     TEST_PARSE_ERROR(LEPT_PARSE_EXPECT_VALUE, "");
@@ -381,6 +384,13 @@ static void test_parse() {
         lept_free(&v);\
         free(json2);\
     } while(0)
+// 第一步：解析原始 JSON 字符串，检查解析是否成功
+// 第二步：将解析后的内存数据序列转化回 JSON 字符串
+// 第三步：对比原始 JSON 和序列化结果，确保完全一致
+
+// 这里我们采用一个最简单的测试方式，把一个 JSON 解析，然后再生成另一 JSON，逐字符比较两个 JSON 是否一模一样。
+// 这种测试可称为往返（roundtrip）测试。但需要注意，同一个 JSON 的内容可以有多种不同的表示方式，例如可以插入不定数量的空白字符，数字 1.0 和 1 也是等价的。
+// 所以另一种测试方式，是比较两次解析的结果（lept_value 的树）是否相同，此功能将会在下一单元讲解。
 
 static void test_stringify_number() {
     TEST_ROUNDTRIP("0");
