@@ -364,6 +364,7 @@ static void lept_stringify_string(lept_context* c, const char* s, size_t len) {
             case '\t':PUTS(c,"\\t",2);break;
             default:
                 if(ch<0x20) { 
+                    // JSON 规范禁止的是在字符串中直接出现0x00到0x1F的原始字节（比如直接写入0x07字节表示响铃符）
                     //控制字符（ASCII < 0x20）：如 BEL（\a，0x07）、垂直制表符（\v，0x0B）等不可见字符，JSON 要求用 Unicode 转义序列 \uXXXX 表示（XXXX 是 4 位十六进制数）
                     char buffer[7];
                     sprintf(buffer, "\\u%04X", ch);

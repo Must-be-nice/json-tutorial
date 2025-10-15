@@ -123,6 +123,7 @@ static void test_parse_string() {
     TEST_STRING("\x24", "\"\\u0024\"");         /* Dollar sign U+0024 */
     TEST_STRING("\xC2\xA2", "\"\\u00A2\"");     /* Cents sign U+00A2 */
     TEST_STRING("\xE2\x82\xAC", "\"\\u20AC\""); /* Euro sign U+20AC */
+    TEST_STRING("\xE2\x82\xAC", "\"€\"");
     TEST_STRING("\xF0\x9D\x84\x9E", "\"\\uD834\\uDD1E\"");  /* G clef sign U+1D11E */
     TEST_STRING("\xF0\x9D\x84\x9E", "\"\\ud834\\udd1e\"");  /* G clef sign U+1D11E */
 }
@@ -424,7 +425,8 @@ static void test_stringify_string() {
     TEST_ROUNDTRIP("\"\\u0024\"");         /* Dollar（$） sign U+0024 */
     TEST_ROUNDTRIP("\"\\u00A2\"");     /* Cents（¢） sign U+00A2 */
     TEST_ROUNDTRIP("\"\\u20AC\""); /* Euro（€） sign U+20AC */
-    TEST_ROUNDTRIP("\"\\uD834\\uDD1E\"");// 𝄞
+    TEST_ROUNDTRIP("\"\\uD834\\uDD1E\"");// 
+    TEST_ROUNDTRIP("\"$𝄞\"");
     //string生成它只会对 ASCII 控制字符（<0x20）进行\uXXXX转义，而对于其他可见的 Unicode 字符（如 $、€等）则直接输出字符本身，而不是保留\uXXXX形式的转义序列。
 }
 
