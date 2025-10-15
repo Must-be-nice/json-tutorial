@@ -6,6 +6,9 @@
 typedef enum { LEPT_NULL, LEPT_FALSE, LEPT_TRUE, LEPT_NUMBER, LEPT_STRING, LEPT_ARRAY, LEPT_OBJECT } lept_type;
 
 #define LEPT_KEY_NOT_EXIST ((size_t)-1)
+//当对无符号类型赋值 -1 时，会触发 “无符号溢出”，其结果是该无符号类型能表示的最大整数值。
+//(size_t)-1 等价于 size_t 类型能表示的最大整数，这个值远超正常索引范围（索引从 0 开始，最大为 “键值对总数 - 1”），因此适合作为 “无效索引” 的标记。
+//选择 (size_t)-1 而非其他值（如 0 或 ~0），核心原因是避免与正常索引冲突
 
 typedef struct lept_value lept_value;
 typedef struct lept_member lept_member;
@@ -19,6 +22,8 @@ struct lept_value {
     }u;
     lept_type type;
 };
+// 动态数组通过新增 capacity（已分配的总容量）字段，提前分配比当前 size 更大的内存，避免频繁重新分配，将添加元素的时间复杂度优化到 O(1)（大多数情况）。
+// 类似于 std::vector 的实现  
 
 struct lept_member {
     char* k; size_t klen;   /* member key string, key string length */

@@ -444,6 +444,7 @@ static void test_stringify() {
         lept_free(&v1);\
         lept_free(&v2);\
     } while(0)
+//  equality 参数指定预期结果， 1 表示相等，0 表示不相等
 
 static void test_equal() {
     TEST_EQUAL("true", "true", 1);
@@ -554,7 +555,9 @@ static void test_access_array() {
     size_t i, j;
 
     lept_init(&a);
-
+    
+    // 测试 “不同初始容量下的尾插功能”
+    // 无论初始容量是 0 还是 5，尾插 10 个元素后，size 必为 10，且元素值正确（验证自动扩容是否生效，数据是否未丢失）。
     for (j = 0; j <= 5; j += 5) {
         lept_set_array(&a, j);
         EXPECT_EQ_SIZE_T(0, lept_get_array_size(&a));
@@ -570,51 +573,59 @@ static void test_access_array() {
         for (i = 0; i < 10; i++)
             EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
     }
+    // 第一循环结束后，a 中已有 10 个元素，值为 0~9。但被lept_set_array重置了。
+    // 第二循环结束后，a 中仍有 10 个元素，值为 0~9。
 
+    // 测试 “尾删功能”
     lept_popback_array_element(&a);
     EXPECT_EQ_SIZE_T(9, lept_get_array_size(&a));
     for (i = 0; i < 9; i++)
         EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
 
+    // 测试 “指定位置删除功能”--删除 0 个元素（无操作）
     lept_erase_array_element(&a, 4, 0);
     EXPECT_EQ_SIZE_T(9, lept_get_array_size(&a));
     for (i = 0; i < 9; i++)
         EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
 
+    // 测试 “指定位置删除功能”--删除末尾 1 个元素
     lept_erase_array_element(&a, 8, 1);
     EXPECT_EQ_SIZE_T(8, lept_get_array_size(&a));
     for (i = 0; i < 8; i++)
         EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
 
+    // 测试 “指定位置删除功能”--删除开头 2 个元素
     lept_erase_array_element(&a, 0, 2);
     EXPECT_EQ_SIZE_T(6, lept_get_array_size(&a));
     for (i = 0; i < 6; i++)
         EXPECT_EQ_DOUBLE((double)i + 2, lept_get_number(lept_get_array_element(&a, i)));
 
-#if 0
+#if 1 // 测试 “指定位置插入功能”
+    // 在开头插入 2 个元素
     for (i = 0; i < 2; i++) {
         lept_init(&e);
         lept_set_number(&e, i);
+        // 从 index=i 插入元素，并用 lept_move 转移所有权
         lept_move(lept_insert_array_element(&a, i), &e);
         lept_free(&e);
     }
 #endif
-    
     EXPECT_EQ_SIZE_T(8, lept_get_array_size(&a));
     for (i = 0; i < 8; i++)
         EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
 
+    // 测试 “收缩容量功能”
     EXPECT_TRUE(lept_get_array_capacity(&a) > 8);
-    lept_shrink_array(&a);
+    lept_shrink_array(&a);// 缩容前的 capacity 为 16（1->2->4->8->16），缩容后为 8
     EXPECT_EQ_SIZE_T(8, lept_get_array_capacity(&a));
     EXPECT_EQ_SIZE_T(8, lept_get_array_size(&a));
     for (i = 0; i < 8; i++)
         EXPECT_EQ_DOUBLE((double)i, lept_get_number(lept_get_array_element(&a, i)));
 
+    // 测试 “清空元素（lept_clear_array）” 与再次缩容
     lept_set_string(&e, "Hello", 5);
     lept_move(lept_pushback_array_element(&a), &e);     /* Test if element is freed */
     lept_free(&e);
-
     i = lept_get_array_capacity(&a);
     lept_clear_array(&a);
     EXPECT_EQ_SIZE_T(0, lept_get_array_size(&a));
@@ -626,42 +637,48 @@ static void test_access_array() {
 }
 
 static void test_access_object() {
-#if 0
+#if 1
     lept_value o, v, *pv;
     size_t i, j, index;
 
     lept_init(&o);
 
+    // 测试 “不同初始容量下的添加成员功能”
     for (j = 0; j <= 5; j += 5) {
         lept_set_object(&o, j);
         EXPECT_EQ_SIZE_T(0, lept_get_object_size(&o));
         EXPECT_EQ_SIZE_T(j, lept_get_object_capacity(&o));
-        for (i = 0; i < 10; i++) {
+        for (i = 0; i < 10; i++) { //循环生成 10 个键（"a" 到 "j"），每个键对应的值为数字i（0 到 9）。
             char key[2] = "a";
             key[0] += i;
             lept_init(&v);
             lept_set_number(&v, i);
-            lept_move(lept_set_object_value(&o, key, 1), &v);
+            lept_move(lept_set_object_value(&o, key, 1), &v);//key指向当前字符的指针(a--j)
+            //lept_set_object_value 返回新添加成员的值的地址, 用 lept_move 转移所有权,把number(&v)的值转移给它
             lept_free(&v);
         }
         EXPECT_EQ_SIZE_T(10, lept_get_object_size(&o));
+        // 验证添加的成员是否正确
         for (i = 0; i < 10; i++) {
             char key[] = "a";
             key[0] += i;
             index = lept_find_object_index(&o, key, 1);
             EXPECT_TRUE(index != LEPT_KEY_NOT_EXIST);
+            // 获取索引对应的value，验证其值是否为i
             pv = lept_get_object_value(&o, index);
             EXPECT_EQ_DOUBLE((double)i, lept_get_number(pv));
         }
     }
 
+    // 测试 “删除成员功能”
     index = lept_find_object_index(&o, "j", 1);    
-    EXPECT_TRUE(index != LEPT_KEY_NOT_EXIST);
-    lept_remove_object_value(&o, index);
+    EXPECT_TRUE(index != LEPT_KEY_NOT_EXIST); // "j"存在
+    lept_remove_object_value(&o, index); // 删除 "j"
     index = lept_find_object_index(&o, "j", 1);
-    EXPECT_TRUE(index == LEPT_KEY_NOT_EXIST);
+    EXPECT_TRUE(index == LEPT_KEY_NOT_EXIST); // "j"已被删除
     EXPECT_EQ_SIZE_T(9, lept_get_object_size(&o));
 
+    // 再删除键"a"，验证大小变为8
     index = lept_find_object_index(&o, "a", 1);
     EXPECT_TRUE(index != LEPT_KEY_NOT_EXIST);
     lept_remove_object_value(&o, index);
@@ -669,24 +686,26 @@ static void test_access_object() {
     EXPECT_TRUE(index == LEPT_KEY_NOT_EXIST);
     EXPECT_EQ_SIZE_T(8, lept_get_object_size(&o));
 
-    EXPECT_TRUE(lept_get_object_capacity(&o) > 8);
+    // 测试 “收缩容量功能”
+    EXPECT_TRUE(lept_get_object_capacity(&o) > 8); // 验证删除后容量仍大于当前大小（容量不会自动减小）
     lept_shrink_object(&o);
     EXPECT_EQ_SIZE_T(8, lept_get_object_capacity(&o));
     EXPECT_EQ_SIZE_T(8, lept_get_object_size(&o));
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < 8; i++) { // 验证缩减后剩余键值对正确（剩余键为"b"到"i"，对应值1到8）
         char key[] = "a";
         key[0] += i + 1;
         EXPECT_EQ_DOUBLE((double)i + 1, lept_get_number(lept_get_object_value(&o, lept_find_object_index(&o, key, 1))));
     }
 
+    // 测试添加字符串类型值 
     lept_set_string(&v, "Hello", 5);
     lept_move(lept_set_object_value(&o, "World", 5), &v); /* Test if element is freed */
     lept_free(&v);
-
     pv = lept_find_object_value(&o, "World", 5);
     EXPECT_TRUE(pv != NULL);
     EXPECT_EQ_STRING("Hello", lept_get_string(pv), lept_get_string_length(pv));
 
+    // 测试 “清空成员（lept_clear_object）” 与再次缩容
     i = lept_get_object_capacity(&o);
     lept_clear_object(&o);
     EXPECT_EQ_SIZE_T(0, lept_get_object_size(&o));
