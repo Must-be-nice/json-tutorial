@@ -421,6 +421,11 @@ static void test_stringify_string() {
     TEST_ROUNDTRIP("\"Hello\\nWorld\"");
     TEST_ROUNDTRIP("\"\\\" \\\\ / \\b \\f \\n \\r \\t\"");
     TEST_ROUNDTRIP("\"Hello\\u0000World\"");
+    TEST_ROUNDTRIP("\"\\u0024\"");         /* Dollar（$） sign U+0024 */
+    TEST_ROUNDTRIP("\"\\u00A2\"");     /* Cents（¢） sign U+00A2 */
+    TEST_ROUNDTRIP("\"\\u20AC\""); /* Euro（€） sign U+20AC */
+    TEST_ROUNDTRIP("\"\\uD834\\uDD1E\"");// 𝄞
+    //string生成它只会对 ASCII 控制字符（<0x20）进行\uXXXX转义，而对于其他可见的 Unicode 字符（如 $、€等）则直接输出字符本身，而不是保留\uXXXX形式的转义序列。
 }
 
 static void test_stringify_array() {
