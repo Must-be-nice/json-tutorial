@@ -418,7 +418,7 @@ static void lept_stringify_string(lept_context* c, const char* s, size_t len) {
         }
     }
     *p++ = '\"';
-    c->top +=size-(p - head);
+    c->top -=size-(p - head);
     //p - head：实际使用的内存字节数（从起始地址 head 到当前指针 p 的距离）。
     //size - (p - head)：预分配内存中未使用的字节数。
     //通过 c->top -= 未使用字节数调整栈顶，确保上下文栈只记录实际使用的内存，避免浪费。
